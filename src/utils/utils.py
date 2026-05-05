@@ -3,14 +3,24 @@ Utility functions for mass fitting.
 """
 
 from typing import cast
+from enum import StrEnum
 import numpy as np
 from numcosmo_py import Ncm, Nc
 from numpy.typing import NDArray
 
 
+class CoordSystem(StrEnum):
+    """
+    Coordinate systems for the input data.
+    """
+
+    CELESTIAL = "celestial"
+    EUCLIDEAN = "euclidean"
+
+
 def create_ncm_spline(
     pz: NDArray[np.float64], nodes: NDArray[np.float64]
-) -> Ncm.Spline | None:
+) -> Ncm.Spline:
     """
     Create a NumCosmo Spline from the given P(z) and nodes.
 
@@ -26,6 +36,12 @@ def create_ncm_spline(
     Ncm.Spline
         The created NumCosmo Spline.
     """
+    if not isinstance(pz, np.ndarray) or not isinstance(nodes, np.ndarray):
+        raise ValueError("pz and nodes must be numpy arrays")
+    if len(pz) != len(nodes):
+        raise ValueError("Length of pz and nodes must be the same")
+    
+
     lower_index = 0
     upper_index = len(nodes) - 1
 
@@ -94,7 +110,12 @@ def compute_radius(ra: float, dec: float, mset: Ncm.MSet) -> float:
 
 
 def compute_tangential_component(
-    e1: float, e2: float, ra: float, dec: float, mset: Ncm.MSet
+    e1: float,
+    e2: float,
+    ra: float,
+    dec: float,
+    coord_system: CoordSystem,
+    mset: Ncm.MSet,
 ) -> float:
     """
     Compute the tangential component of the ellipticity from the given shape parameters
@@ -110,6 +131,8 @@ def compute_tangential_component(
         The right ascension of the object.
     dec : float
         The declination of the object.
+    coord_system : CoordSystem
+        The coordinate system of the input data (celestial or euclidean).
     mset : Ncm.MSet
         The cosmological model to use for the calculation.
 
@@ -124,13 +147,20 @@ def compute_tangential_component(
     hp.prepare(cosmo)
 
     _, phi = hp.polar_angles(ra, dec)
-    phi = np.pi - phi
+
+    if coord_system == CoordSystem.EUCLIDEAN:
+        phi = np.pi - phi
 
     return np.real((e1 + 1j * e2) * np.exp(-2j * phi))
 
 
 def compute_cross_component(
-    e1: float, e2: float, ra: float, dec: float, mset: Ncm.MSet
+    e1: float,
+    e2: float,
+    ra: float,
+    dec: float,
+    coord_system: CoordSystem,
+    mset: Ncm.MSet,
 ) -> float:
     """
     Compute the cross component of the ellipticity from the given shape parameters and
@@ -146,6 +176,8 @@ def compute_cross_component(
         The right ascension of the object.
     dec : float
         The declination of the object.
+    coord_system : CoordSystem
+        The coordinate system of the input data (celestial or euclidean).
     mset : Ncm.MSet
         The cosmological model to use for the calculation.
 
@@ -160,6 +192,8 @@ def compute_cross_component(
     hp.prepare(cosmo)
 
     _, phi = hp.polar_angles(ra, dec)
-    phi = np.pi - phi
+
+    if coord_system == CoordSystem.EUCLIDEAN:
+        phi = np.pi - phi
 
     return np.imag((e1 + 1j * e2) * np.exp(-2j * phi))
