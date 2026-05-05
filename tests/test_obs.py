@@ -3,8 +3,8 @@ Test suite for the Obs Class.
 """
 
 from src.obs.obs import Obs
-from typing import Annotated, Any, Sequence, cast, Set, ClassVar
-from enum import StrEnum, auto
+from typing import Any
+from enum import StrEnum
 import pandas as pd
 import pytest
 
@@ -64,7 +64,7 @@ def fixture_valid_obs_data(request) -> pd.DataFrame:
             "pz_nodes": [[0.1, 0.2], [0.3, 0.4]],
             "extra_col": ["extra1", "extra2"],
         }
-    else: # pragma: no cover
+    else:  # pragma: no cover
         raise ValueError("Invalid test case")
     return pd.DataFrame(data)
 
@@ -86,7 +86,7 @@ def fixture_invalid_obs_data(request) -> Any:
         return "This is not a DataFrame"
     elif request.param == InvalidTestObs.NONE:
         return None
-    else: # pragma: no cover
+    else:  # pragma: no cover
         raise ValueError("Invalid test case")
 
 
