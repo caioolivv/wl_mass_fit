@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wl-mass-fit"
+version = "0.1.0"
+description = "Weak-lensing cluster mass fitting library"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "pyarrow",
+    "pydantic>=2",
+    "emcee",
+    "typer>=0.9",
+    "astropy",
+]
+
+[project.scripts]
+wl-mass-fit = "src.cli.app:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

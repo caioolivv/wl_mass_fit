@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: wl-mass-fit
+Version: 0.1.0
+Summary: Weak-lensing cluster mass fitting library
+Requires-Python: >=3.11
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: pyarrow
+Requires-Dist: pydantic>=2
+Requires-Dist: emcee
+Requires-Dist: typer>=0.9
+Requires-Dist: astropy

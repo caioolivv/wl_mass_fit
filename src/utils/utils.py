@@ -2,7 +2,7 @@
 Utility functions for mass fitting.
 """
 
-from typing import cast
+from typing import cast, Sequence
 from enum import StrEnum
 import numpy as np
 from numcosmo_py import Ncm, Nc
@@ -17,18 +17,30 @@ class CoordSystem(StrEnum):
     CELESTIAL = "celestial"
     EUCLIDEAN = "euclidean"
 
+    def to_ncm(self) -> Nc.GalaxyWLObsCoord:
+        return _TO_NCM_COORD_SYSTEM[self]
 
-def create_ncm_spline(
-    pz: NDArray[np.float64], nodes: NDArray[np.float64]
-) -> Ncm.Spline:
+    @classmethod
+    def from_ncm(cls, ncm_coord_system: Nc.GalaxyWLObsCoord) -> "CoordSystem":
+        return _FROM_NCM_COORD_SYSTEM[ncm_coord_system]
+
+
+_TO_NCM_COORD_SYSTEM: dict[CoordSystem, Nc.GalaxyWLObsCoord] = {
+    CoordSystem.CELESTIAL: Nc.GalaxyWLObsCoord.CELESTIAL,
+    CoordSystem.EUCLIDEAN: Nc.GalaxyWLObsCoord.EUCLIDEAN,
+}
+_FROM_NCM_COORD_SYSTEM = {v: k for k, v in _TO_NCM_COORD_SYSTEM.items()}
+
+
+def create_ncm_spline(pz: Sequence[float], nodes: Sequence[float]) -> Ncm.Spline:
     """
     Create a NumCosmo Spline from the given P(z) and nodes.
 
     Parameters
     ----------
-    pz : NDArray[np.float64]
+    pz : Sequence[float]
         The P(z) values.
-    nodes : NDArray[np.float64]
+    nodes : Sequence[float]
         The nodes corresponding to the P(z) values.
 
     Returns
@@ -36,11 +48,8 @@ def create_ncm_spline(
     Ncm.Spline
         The created NumCosmo Spline.
     """
-    if not isinstance(pz, np.ndarray) or not isinstance(nodes, np.ndarray):
-        raise ValueError("pz and nodes must be numpy arrays")
     if len(pz) != len(nodes):
         raise ValueError("Length of pz and nodes must be the same")
-    
 
     lower_index = 0
     upper_index = len(nodes) - 1

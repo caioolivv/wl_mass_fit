@@ -1,0 +1,8 @@
+numpy
+scipy
+pandas
+pyarrow
+pydantic>=2
+emcee
+typer>=0.9
+astropy

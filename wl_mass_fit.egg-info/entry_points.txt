@@ -1,0 +1,2 @@
+[console_scripts]
+wl-mass-fit = src.cli.app:app

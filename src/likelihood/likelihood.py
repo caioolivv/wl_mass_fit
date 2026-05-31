@@ -9,6 +9,7 @@ from ..utils.utils import (
     CoordSystem,
     create_ncm_spline,
 )
+from .mset import create_mset
 from abc import ABC, abstractmethod
 from pydantic import (
     BaseModel,
@@ -16,37 +17,13 @@ from pydantic import (
     Field,
     field_validator,
     ValidationInfo,
+    PrivateAttr,
 )
-from typing import ClassVar, Sequence, Set, Tuple
-from numcosmo_py import Nc, Ncm
+from typing import cast, ClassVar, Sequence, Set, Tuple
+from numcosmo_py import Ncm, Nc
 import numpy as np
 from numpy.typing import NDArray
 import pandas as pd
-
-default_cosmo = Nc.HICosmoDEXcdm()
-
-default_cosmo.omega_x2omega_k()
-
-default_cosmo["H0"] = 70
-default_cosmo["Omegab"] = 0.045
-default_cosmo["Omegac"] = 0.3 - 0.045
-default_cosmo["w"] = -1.0
-default_cosmo["Omegak"] = 0.00
-default_dist = Nc.Distance.new(6.0)
-default_hms = Nc.HaloCMParam.new(Nc.HaloMassSummaryMassDef.CRITICAL, 500.0)
-default_dp = Nc.HaloDensityProfileNFW.new(default_hms)
-default_smd = Nc.WLSurfaceMassDensity.new(default_dist)
-default_hp = Nc.HaloPosition.new(default_dist)
-
-default_cosmo.param_set_desc("H0", {"fit": False})
-default_cosmo.param_set_desc("Omegac", {"fit": False})
-default_cosmo.param_set_desc("Omegab", {"fit": False})
-default_cosmo.param_set_desc("w", {"fit": False})
-default_cosmo.param_set_desc("Omegak", {"fit": False})
-default_hms.param_set_desc("cDelta", {"fit": False})
-default_hms.param_set_desc("log10MDelta", {"fit": True})
-
-default_mset = Ncm.MSet.new_array([default_cosmo, default_dp, default_smd, default_hp])
 
 
 class Likelihood(BaseModel, ABC):
@@ -63,24 +40,26 @@ class Likelihood(BaseModel, ABC):
     )
 
     mset: Ncm.MSet = Field(
-        default=default_mset, description="Model set for likelihood computation."
+        default_factory=create_mset,
+        description="Model set for likelihood computation.",
     )
     fparams: Sequence[str] = Field(
         default=["NcHaloMassSummary:log10MDelta"],
         description="Names of free parameters for MCMC sampling.",
     )
-    param_bounds: Sequence[Tuple[float, float]] | None = Field(
-        default=None, description="Parameter bounds for MCMC sampling."
-    )
-    obs: pd.DataFrame = Field(
-        ..., description="Observables for likelihood computation."
+    fparams_bounds: Sequence[Tuple[float, float]] | None = Field(
+        default=None, description="Parameters bounds for MCMC sampling."
     )
     coord_system: CoordSystem = Field(
-        default=CoordSystem.CELESTIAL,
         description=(
             "Coordinate system of the input data (e.g., 'celestial' or 'cartesian')."
         ),
     )
+    obs: pd.DataFrame = Field(
+        ..., description="Observables for likelihood computation."
+    )
+
+    _posterior: pd.DataFrame = PrivateAttr()
 
     REQUIRED_COLUMNS: ClassVar[Set[str]] = {
         "i_ra",
@@ -92,6 +71,7 @@ class Likelihood(BaseModel, ABC):
         "i_hsmshaperegauss_derived_shear_bias_m",
         "i_hsmshaperegauss_derived_shear_bias_c1",
         "i_hsmshaperegauss_derived_shear_bias_c2",
+        "z",
         "pz_weights",
         "pz_nodes",
     }
@@ -121,46 +101,54 @@ class Likelihood(BaseModel, ABC):
 
     @field_validator("fparams")
     @classmethod
-    def validate_fparams(cls, v: Sequence[str], info: ValidationInfo) -> Sequence[str]:
-        mset = info.data.get("mset", default_mset)
+    def validate_fparams(cls, v: Sequence[str]) -> Sequence[str]:
+        if not isinstance(v, Sequence) or isinstance(v, str):
+            raise ValueError("fparams must be a sequence of strings.")
 
         for param in v:
+            if not isinstance(param, str) or ":" not in param:
+                raise ValueError(
+                    "Each fparam must be a string in the format 'ModelName:ParamName'."
+                )
+
+        return v
+
+    def _configure_fparams(self) -> None:
+        """Apply fitted-parameter flags and bounds to the instance mset."""
+        mset = self.mset
+
+        mset.prepare_fparam_map()
+
+        for param in self.fparams:
             if mset.param_get_by_full_name(param) is None:
                 raise ValueError(f"Parameter '{param}' not found in mset.")
 
         for i in range(mset.fparams_len()):
-            mid = mset.fparam_get_mid(i)
-            pid = mset.fparam_get_pid(i)
+            mid = mset.fparam_get_pi(i).mid
+            pid = mset.fparam_get_pi(i).pid
             model = mset.peek(mid)
             model.param_set_desc(model.param_name(pid), {"fit": False})
 
-        for param in v:
+        for param in self.fparams:
             model_name, param_name = param.split(":", 1)
             mset.peek_by_name(model_name).param_set_desc(param_name, {"fit": True})
 
-        return v
+        if self.fparams_bounds is None:
+            return
 
-    @field_validator("param_bounds")
-    @classmethod
-    def validate_param_bounds(
-        cls, v: Sequence[Tuple[float, float]] | None, info: ValidationInfo
-    ) -> Sequence[Tuple[float, float]] | None:
-        fparams = info.data.get("fparams", ["NcHaloMassSummary:log10MDelta"])
-        mset = info.data.get("mset", default_mset)
-
-        if v is None:
-            return v
-
-        if len(v) != len(fparams):
+        if len(self.fparams_bounds) != len(self.fparams):
             raise ValueError("Length of param_bounds must match length of fparams.")
 
-        for param, bounds in zip(fparams, v):
+        for param, bounds in zip(self.fparams, self.fparams_bounds):
             model_name, param_name = param.split(":", 1)
             mset.peek_by_name(model_name).param_set_desc(
                 param_name, {"lower-bound": bounds[0], "upper-bound": bounds[1]}
             )
 
-        return v
+    def __init__(self, **data):
+        """Initialize and configure fparams on the mset."""
+        super().__init__(**data)
+        self._configure_fparams()
 
     @field_validator("obs")
     @classmethod
@@ -173,38 +161,44 @@ class Likelihood(BaseModel, ABC):
 
             raise ValueError(f"Missing required columns: {missing_cols}")
 
-        mset = info.data.get("mset", default_mset)
+        mset = info.data.get("mset", create_mset())
         coord_system = info.data.get("coord_system", CoordSystem.CELESTIAL)
-        v["pz_spline"] = v.apply(
-            lambda row: create_ncm_spline(row["pz_nodes"], row["pz_weights"]), axis=1
-        )
-        v["radius"] = v.apply(
-            lambda row: compute_radius(row["i_ra"], row["i_dec"], mset), axis=1
-        )
-        v["e_t"] = v.apply(
-            lambda row: compute_tangential_component(
-                row["i_hsmshaperegauss_e1"],
-                row["i_hsmshaperegauss_e2"],
-                row["i_ra"],
-                row["i_dec"],
-                coord_system,
-                mset,
-            ),
-            axis=1,
-        )
-        v["e_x"] = v.apply(
-            lambda row: compute_cross_component(
-                row["i_hsmshaperegauss_e1"],
-                row["i_hsmshaperegauss_e2"],
-                row["i_ra"],
-                row["i_dec"],
-                coord_system,
-                mset,
-            ),
-            axis=1,
-        )
+
+        # Reuse pre-built splines from the generator when present
+        if "pz_spline" not in v.columns:
+            v["pz_spline"] = [
+                create_ncm_spline(w, n)
+                for w, n in zip(v["pz_weights"], v["pz_nodes"])
+            ]
+
+        # Prepare once; compute radius and polar angle in a single pass per galaxy
+        hp = cast(Nc.HaloPosition, mset.peek_by_name("NcHaloPosition"))
+        cosmo = cast(Nc.HICosmo, mset.peek_by_name("NcHICosmo"))
+        hp.prepare(cosmo)
+
+        ras = v["i_ra"].to_numpy()
+        decs = v["i_dec"].to_numpy()
+
+        v["radius"] = [hp.projected_radius_from_ra_dec(cosmo, ra, dec) for ra, dec in zip(ras, decs)]
+
+        phis = np.array([hp.polar_angles(ra, dec)[1] for ra, dec in zip(ras, decs)])
+        if coord_system == CoordSystem.EUCLIDEAN:
+            phis = np.pi - phis
+
+        e_complex = v["i_hsmshaperegauss_e1"].to_numpy() + 1j * v["i_hsmshaperegauss_e2"].to_numpy()
+        rotated = e_complex * np.exp(-2j * phis)
+        v["e_t"] = np.real(rotated)
+        v["e_x"] = np.imag(rotated)
 
         return v
+
+    @abstractmethod
+    def prepare_data(self) -> None:
+        """
+        Prepare the data for likelihood computation, such as computing derived
+        quantities or precomputing model predictions.
+        """
+        raise NotImplementedError("Subclasses must implement this method.")
 
     @abstractmethod
     def maximum_likelihood_estimate(self) -> NDArray[np.float64]:
@@ -220,7 +214,7 @@ class Likelihood(BaseModel, ABC):
         nwalkers: int,
         nthreads: int,
         progress: bool,
-        filename: str | None = None,
+        filename: str,
     ) -> pd.DataFrame:
         """
         Sample the posterior distribution of the model parameters given the data.
